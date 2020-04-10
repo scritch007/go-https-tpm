@@ -12,7 +12,7 @@ import (
 func main() {
 
 	tlsConfig, err := https_tpm.NewTransport("sim", tpmutil.Handle(0x81000000), "localhost")
-	if err != nil{
+	if err != nil {
 		panic(errors.Wrap(err, "couldn't get transport"))
 	}
 

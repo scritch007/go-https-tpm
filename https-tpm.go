@@ -2,8 +2,11 @@ package https_tpm
 
 import (
 	"crypto"
+	"fmt"
 	"github.com/folbricht/tpmk"
 	"github.com/google/go-tpm/tpmutil"
+	"runtime"
+	"sync"
 
 	"crypto/rand"
 	"crypto/tls"
@@ -23,12 +26,13 @@ type wrapper struct {
 	device    string
 	handle    tpmutil.Handle
 	publicKey crypto.PublicKey
+	lock      sync.Mutex
 }
 
-func (w wrapper) Public() crypto.PublicKey {
+func (w *wrapper) Public() crypto.PublicKey {
 	return w.publicKey
 }
-func (w wrapper) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error) {
+func (w *wrapper) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error) {
 	pk, close, err := w.getPk()
 	defer close()
 	if err != nil {
@@ -37,23 +41,34 @@ func (w wrapper) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (si
 	return pk.Sign(rand, digest, opts)
 }
 
-func (w wrapper) getPk() (*tpmk.RSAPrivateKey, func() error, error) {
+func (w *wrapper) getPk() (pk tpmk.RSAPrivateKey, close func() error, err error) {
+	w.lock.Lock()
+	_, file, no, ok := runtime.Caller(1)
+	if ok {
+		fmt.Printf("called from %s#%d\n", file, no)
+	}
 	dev, err := tpmk.OpenDevice(w.device)
 	if err != nil {
-		return nil, func() error { return nil }, errors.Wrapf(err, "opening %s", w.device)
+		return pk, func() error { return nil }, errors.Wrapf(err, "opening %s", w.device)
+	}
+	close = func() error {
+		fmt.Println("TPM closed")
+		err :=  dev.Close()
+		w.lock.Unlock()
+		return err
 	}
 
-	pk, err := tpmk.NewRSAPrivateKey(dev, w.handle, "")
+	pk, err = tpmk.NewRSAPrivateKey(dev, w.handle, "")
 	if err != nil {
-		return nil, dev.Close, errors.Wrap(err, "error loading private key")
+		return pk, close, errors.Wrap(err, "error loading private key")
 	}
 
-	return &pk, dev.Close, nil
+	return pk, close, nil
 }
 
 func NewTransport(device string, handle tpmutil.Handle, hostname string) (*tls.Config, error) {
 
-	w := wrapper{
+	w := &wrapper{
 		device: device,
 		handle: handle,
 	}
@@ -66,7 +81,7 @@ func NewTransport(device string, handle tpmutil.Handle, hostname string) (*tls.C
 
 	w.publicKey = pk.Public()
 
-	cert, err := generateSelfSignCert(pk, hostname)
+	cert, err := generateSelfSignCert(&pk, hostname)
 	if err != nil {
 		return nil, errors.Wrap(err, "couldn't generate certificate")
 	}
