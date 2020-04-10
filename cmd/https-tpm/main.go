@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"github.com/folbricht/tpmk"
 	"github.com/google/go-tpm/tpmutil"
 	"github.com/scritch007/go-https-tpm"
 	"net/http"
@@ -11,14 +10,8 @@ import (
 )
 
 func main() {
-	device := "sim"
-	dev, err := tpmk.OpenDevice(device)
-	if err != nil {
-		panic(errors.Wrap(err, "opening "+device))
-	}
-	defer dev.Close()
 
-	tlsConfig, err := https_tpm.NewTransport(dev, tpmutil.Handle(0x81000000), "localhost")
+	tlsConfig, err := https_tpm.NewTransport("sim", tpmutil.Handle(0x81000000), "localhost")
 	if err != nil{
 		panic(errors.Wrap(err, "couldn't get transport"))
 	}

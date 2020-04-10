@@ -1,6 +1,7 @@
 package https_tpm
 
 import (
+	"crypto"
 	"github.com/folbricht/tpmk"
 	"github.com/google/go-tpm/tpmutil"
 
@@ -18,13 +19,54 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewTransport(dev io.ReadWriteCloser, handle tpmutil.Handle, hostname string) (*tls.Config, error) {
-	pk, err := tpmk.NewRSAPrivateKey(dev, handle, "")
+type wrapper struct {
+	device    string
+	handle    tpmutil.Handle
+	publicKey crypto.PublicKey
+}
+
+func (w wrapper) Public() crypto.PublicKey {
+	return w.publicKey
+}
+func (w wrapper) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error) {
+	pk, close, err := w.getPk()
+	defer close()
 	if err != nil {
-		return nil, errors.Wrap(err, "error loading private key")
+		return nil, errors.Wrap(err, "Sign: retrieving private key")
+	}
+	return pk.Sign(rand, digest, opts)
+}
+
+func (w wrapper) getPk() (*tpmk.RSAPrivateKey, func() error, error) {
+	dev, err := tpmk.OpenDevice(w.device)
+	if err != nil {
+		return nil, func() error { return nil }, errors.Wrapf(err, "opening %s", w.device)
 	}
 
-	cert, err := generateSelfSignCert(&pk, hostname)
+	pk, err := tpmk.NewRSAPrivateKey(dev, w.handle, "")
+	if err != nil {
+		return nil, dev.Close, errors.Wrap(err, "error loading private key")
+	}
+
+	return &pk, dev.Close, nil
+}
+
+func NewTransport(device string, handle tpmutil.Handle, hostname string) (*tls.Config, error) {
+
+	w := wrapper{
+		device: device,
+		handle: handle,
+	}
+
+	pk, tpmClose, err := w.getPk()
+	defer tpmClose()
+	if err != nil {
+		return nil, errors.Wrap(err, "retrieve private key")
+	}
+
+	w.publicKey = pk.Public()
+
+	cert, err := generateSelfSignCert(pk, hostname)
 	if err != nil {
 		return nil, errors.Wrap(err, "couldn't generate certificate")
 	}
@@ -33,7 +75,7 @@ func NewTransport(dev io.ReadWriteCloser, handle tpmutil.Handle, hostname string
 		Certificates: []tls.Certificate{
 			{
 				Certificate: [][]byte{cert},
-				PrivateKey:  pk,
+				PrivateKey:  w,
 			},
 		},
 	}, nil
