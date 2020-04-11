@@ -11,7 +11,7 @@ import (
 
 func main() {
 
-	tlsConfig, err := https_tpm.NewTransport("sim", tpmutil.Handle(0x81000000), "localhost")
+	tlsConfig, err := https_tpm.NewTransport("sim", tpmutil.Handle(0x81000000), tpmutil.Handle(0x1500000), "localhost")
 	if err != nil {
 		panic(errors.Wrap(err, "couldn't get transport"))
 	}

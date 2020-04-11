@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"fmt"
 	"github.com/folbricht/tpmk"
+	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpmutil"
 	"runtime"
 	"sync"
@@ -34,39 +35,61 @@ func (w *wrapper) Public() crypto.PublicKey {
 }
 func (w *wrapper) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error) {
 	pk, close, err := w.getPk()
-	defer close()
+	defer close.Close()
 	if err != nil {
 		return nil, errors.Wrap(err, "Sign: retrieving private key")
 	}
 	return pk.Sign(rand, digest, opts)
 }
 
-func (w *wrapper) getPk() (pk tpmk.RSAPrivateKey, close func() error, err error) {
+type closeWrapper struct {
+	close func() error
+	dev   io.ReadWriter
+}
+
+func (c closeWrapper) Read(p []byte) (n int, err error) {
+	return c.dev.Read(p)
+}
+
+func (c closeWrapper) Write(p []byte) (n int, err error) {
+	return c.dev.Write(p)
+}
+
+func (c closeWrapper) Close() error {
+	return c.close()
+}
+
+func (w *wrapper) getPk() (pk tpmk.RSAPrivateKey, cw io.ReadWriteCloser, err error) {
 	w.lock.Lock()
 	_, file, no, ok := runtime.Caller(1)
 	if ok {
 		fmt.Printf("called from %s#%d\n", file, no)
 	}
+
 	dev, err := tpmk.OpenDevice(w.device)
 	if err != nil {
-		return pk, func() error { return nil }, errors.Wrapf(err, "opening %s", w.device)
+		return pk, closeWrapper{close: func() error { return nil }}, errors.Wrapf(err, "opening %s", w.device)
 	}
-	close = func() error {
-		fmt.Println("TPM closed")
-		err :=  dev.Close()
-		w.lock.Unlock()
-		return err
+
+	cw = closeWrapper{
+		dev: dev,
+		close: func() error {
+			fmt.Println("TPM closed")
+			err := dev.Close()
+			w.lock.Unlock()
+			return err
+		},
 	}
 
 	pk, err = tpmk.NewRSAPrivateKey(dev, w.handle, "")
 	if err != nil {
-		return pk, close, errors.Wrap(err, "error loading private key")
+		return pk, cw, errors.Wrap(err, "error loading private key")
 	}
 
-	return pk, close, nil
+	return pk, cw, nil
 }
 
-func NewTransport(device string, handle tpmutil.Handle, hostname string) (*tls.Config, error) {
+func NewTransport(device string, handle, certificateHandle tpmutil.Handle, hostname string) (*tls.Config, error) {
 
 	w := &wrapper{
 		device: device,
@@ -74,16 +97,30 @@ func NewTransport(device string, handle tpmutil.Handle, hostname string) (*tls.C
 	}
 
 	pk, tpmClose, err := w.getPk()
-	defer tpmClose()
+	defer tpmClose.Close()
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieve private key")
 	}
 
 	w.publicKey = pk.Public()
+	var cert []byte
 
-	cert, err := generateSelfSignCert(&pk, hostname)
+	cert, err = tpmk.NVRead(tpmClose, certificateHandle, "")
+
 	if err != nil {
-		return nil, errors.Wrap(err, "couldn't generate certificate")
+		fmt.Printf("Couldn't access to certificate: %v regenerating", err)
+		cert, err := generateSelfSignCert(&pk, hostname)
+		if err != nil {
+			return nil, errors.Wrap(err, "couldn't generate certificate")
+		}
+
+		if err = tpmk.NVWrite(tpmClose,
+			certificateHandle,
+			cert,
+			"",
+			tpm2.AttrOwnerWrite|tpm2.AttrOwnerRead|tpm2.AttrAuthRead|tpm2.AttrPPRead); err != nil {
+			return nil, errors.Wrap(err, "couldn't write to NV")
+		}
 	}
 
 	return &tls.Config{
