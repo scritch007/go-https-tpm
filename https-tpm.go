@@ -2,6 +2,8 @@ package https_tpm
 
 import (
 	"crypto"
+	"crypto/rsa"
+	"encoding/asn1"
 	"fmt"
 	"github.com/folbricht/tpmk"
 	"github.com/google/go-tpm/tpm2"
@@ -170,6 +172,46 @@ func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle, password string
 	w.publicKey = pk.Public()
 
 	return w, nil
+}
+
+func checkCertificate(cert []byte, pk crypto.PrivateKey) error {
+
+	var sCert x509.Certificate
+	_, err := asn1.Unmarshal(cert, &sCert)
+	if err != nil {
+		return errors.Wrap(err, "ASN1 unmarshal")
+	}
+
+	switch pk.(type) {
+	case privateKey:
+		switch pk.(privateKey).Public().(type) {
+		case *rsa.PublicKey:
+		default:
+			return errors.New("unimplemented public key type")
+		}
+		err = checkSignature(sCert, sCert.Signature, pk.(privateKey).Public().(*rsa.PublicKey))
+		if err != nil {
+			return errors.Wrap(err, "Check signature failed")
+		}
+	}
+	return errors.New("unimplemented check")
+}
+
+// CheckSignature verifies that signature is a valid signature over signed from
+// a crypto.PublicKey.
+func checkSignature(c x509.Certificate, signature []byte, publicKey *rsa.PublicKey) (err error) {
+	hashType := crypto.SHA256
+	if !hashType.Available() {
+		return x509.ErrUnsupportedAlgorithm
+	}
+	signed, err := asn1.Marshal(c)
+	if err != nil {
+		errors.Wrap(err, "Couldn't marshal certificate")
+	}
+	h := hashType.New()
+	h.Write(signed)
+	digest := h.Sum(nil)
+	return rsa.VerifyPKCS1v15(publicKey, hashType, digest, signature)
 }
 
 // LoadCertificateFromNVRam load the certificate from TPM NVRam
