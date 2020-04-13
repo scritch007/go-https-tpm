@@ -28,6 +28,7 @@ type wrapper struct {
 	handle    tpmutil.Handle
 	publicKey crypto.PublicKey
 	lock      sync.Mutex
+	password  string
 }
 
 func (w *wrapper) Public() crypto.PublicKey {
@@ -81,7 +82,7 @@ func (w *wrapper) getPk() (pk tpmk.RSAPrivateKey, cw io.ReadWriteCloser, err err
 		},
 	}
 
-	pk, err = tpmk.NewRSAPrivateKey(dev, w.handle, "")
+	pk, err = tpmk.NewRSAPrivateKey(dev, w.handle, w.password)
 	if err != nil {
 		return pk, cw, errors.Wrap(err, "error loading private key")
 	}
@@ -152,11 +153,12 @@ func generateSelfSignCert(priv privateKey, host string) ([]byte, error) {
 }
 
 // LoadPrivateKeyFromTPM return a private from TPM
-func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle) (crypto.PrivateKey, error) {
+func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle, password string) (crypto.PrivateKey, error) {
 
 	w := &wrapper{
-		device: device,
-		handle: handle,
+		device:   device,
+		handle:   handle,
+		password: password,
 	}
 
 	pk, tpmClose, err := w.getPk()
@@ -171,7 +173,7 @@ func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle) (crypto.Private
 }
 
 // LoadCertificateFromNVRam load the certificate from TPM NVRam
-func LoadCertificateFromNVRam(device string, handle tpmutil.Handle) ([]byte, error) {
+func LoadCertificateFromNVRam(device string, handle tpmutil.Handle, password string) ([]byte, error) {
 	dev, err := tpmk.OpenDevice(device)
 	if err != nil {
 		return nil, errors.Wrap(err, "opening TPM")
@@ -179,7 +181,7 @@ func LoadCertificateFromNVRam(device string, handle tpmutil.Handle) ([]byte, err
 
 	defer dev.Close()
 
-	return tpmk.NVRead(dev, handle, "")
+	return tpmk.NVRead(dev, handle, password)
 }
 
 // Generate a self signed certificate
@@ -198,7 +200,7 @@ func GenerateSelfSignCertificate(pk crypto.PrivateKey, hostname string) ([]byte,
 }
 
 // WriteCertificateToNVRam helper to store certificate to NVRam
-func WriteCertificateToNVRam(device string, cert []byte, handle tpmutil.Handle) error {
+func WriteCertificateToNVRam(device string, cert []byte, handle tpmutil.Handle, password string) error {
 	dev, err := tpmk.OpenDevice(device)
 	if err != nil {
 		return errors.Wrap(err, "opening TPM")
@@ -209,6 +211,6 @@ func WriteCertificateToNVRam(device string, cert []byte, handle tpmutil.Handle) 
 	return tpmk.NVWrite(dev,
 		handle,
 		cert,
-		"",
+		password,
 		tpm2.AttrOwnerWrite|tpm2.AttrOwnerRead|tpm2.AttrAuthRead|tpm2.AttrPPRead)
 }
