@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"fmt"
 	"github.com/google/go-tpm/tpmutil"
 	"github.com/scritch007/go-https-tpm"
 	"net/http"
@@ -11,7 +12,25 @@ import (
 
 func main() {
 
-	tlsConfig, err := https_tpm.NewTransport("sim", tpmutil.Handle(0x81000000), tpmutil.Handle(0x1500000), "localhost")
+	pk, err := https_tpm.LoadPrivateKeyFromTPM("sim", tpmutil.Handle(0x81000000))
+	if err != nil {
+		panic(err)
+	}
+	var cert []byte
+
+	cert, err = https_tpm.LoadCertificateFromNVRam("sim", tpmutil.Handle(0x1500000))
+	if err != nil {
+		fmt.Printf("Generating self signed certificate")
+		cert, err = https_tpm.GenerateSelfSignCertificate(pk, "localhost")
+		if err != nil {
+			panic(err)
+		}
+		if err := https_tpm.WriteCertificateToNVRam("sim", cert, tpmutil.Handle(0x1500000)); err != nil {
+			panic(err)
+		}
+	}
+
+	tlsConfig, err := https_tpm.NewTransport(pk, cert)
 	if err != nil {
 		panic(errors.Wrap(err, "couldn't get transport"))
 	}

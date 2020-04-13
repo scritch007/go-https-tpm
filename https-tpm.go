@@ -89,52 +89,26 @@ func (w *wrapper) getPk() (pk tpmk.RSAPrivateKey, cw io.ReadWriteCloser, err err
 	return pk, cw, nil
 }
 
-func NewTransport(device string, handle, certificateHandle tpmutil.Handle, hostname string) (*tls.Config, error) {
+func NewTransport(privateKey crypto.PrivateKey, cert []byte) (*tls.Config, error) {
 
-	w := &wrapper{
-		device: device,
-		handle: handle,
-	}
-
-	pk, tpmClose, err := w.getPk()
-	defer tpmClose.Close()
-	if err != nil {
-		return nil, errors.Wrap(err, "retrieve private key")
-	}
-
-	w.publicKey = pk.Public()
-	var cert []byte
-
-	cert, err = tpmk.NVRead(tpmClose, certificateHandle, "")
-
-	if err != nil {
-		fmt.Printf("Couldn't access to certificate: %v regenerating", err)
-		cert, err := generateSelfSignCert(&pk, hostname)
-		if err != nil {
-			return nil, errors.Wrap(err, "couldn't generate certificate")
-		}
-
-		if err = tpmk.NVWrite(tpmClose,
-			certificateHandle,
-			cert,
-			"",
-			tpm2.AttrOwnerWrite|tpm2.AttrOwnerRead|tpm2.AttrAuthRead|tpm2.AttrPPRead); err != nil {
-			return nil, errors.Wrap(err, "couldn't write to NV")
-		}
-	}
+	// Check if certificate signature matches the private key
 
 	return &tls.Config{
 		Certificates: []tls.Certificate{
 			{
 				Certificate: [][]byte{cert},
-				PrivateKey:  w,
+				PrivateKey:  privateKey,
 			},
 		},
 	}, nil
 }
 
+type privateKey interface {
+	Public() crypto.PublicKey
+}
+
 // generateSelfSignCert will generate keys where specified
-func generateSelfSignCert(priv *tpmk.RSAPrivateKey, host string) ([]byte, error) {
+func generateSelfSignCert(priv privateKey, host string) ([]byte, error) {
 
 	notBefore := time.Now()
 
@@ -175,4 +149,66 @@ func generateSelfSignCert(priv *tpmk.RSAPrivateKey, host string) ([]byte, error)
 	}
 
 	return derBytes, nil
+}
+
+// LoadPrivateKeyFromTPM return a private from TPM
+func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle) (crypto.PrivateKey, error) {
+
+	w := &wrapper{
+		device: device,
+		handle: handle,
+	}
+
+	pk, tpmClose, err := w.getPk()
+	defer tpmClose.Close()
+	if err != nil {
+		return nil, errors.Wrap(err, "retrieve private key")
+	}
+
+	w.publicKey = pk.Public()
+
+	return w, nil
+}
+
+// LoadCertificateFromNVRam load the certificate from TPM NVRam
+func LoadCertificateFromNVRam(device string, handle tpmutil.Handle) ([]byte, error) {
+	dev, err := tpmk.OpenDevice(device)
+	if err != nil {
+		return nil, errors.Wrap(err, "opening TPM")
+	}
+
+	defer dev.Close()
+
+	return tpmk.NVRead(dev, handle, "")
+}
+
+// Generate a self signed certificate
+func GenerateSelfSignCertificate(pk crypto.PrivateKey, hostname string) ([]byte, error) {
+
+	privateKey, ok := pk.(privateKey)
+	if !ok {
+		return nil, errors.New("Private key doesn't have Public method")
+	}
+
+	cert, err := generateSelfSignCert(privateKey, hostname)
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't generate certificate")
+	}
+	return cert, nil
+}
+
+// WriteCertificateToNVRam helper to store certificate to NVRam
+func WriteCertificateToNVRam(device string, cert []byte, handle tpmutil.Handle) error {
+	dev, err := tpmk.OpenDevice(device)
+	if err != nil {
+		return errors.Wrap(err, "opening TPM")
+	}
+
+	defer dev.Close()
+
+	return tpmk.NVWrite(dev,
+		handle,
+		cert,
+		"",
+		tpm2.AttrOwnerWrite|tpm2.AttrOwnerRead|tpm2.AttrAuthRead|tpm2.AttrPPRead)
 }
