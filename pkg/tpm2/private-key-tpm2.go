@@ -152,12 +152,16 @@ func (w *wrapperTPM2) init(handle uint32) error {
 
 func (w *wrapperTPM2) openTPM() (*tpm2.TPMContext, error) {
 	w.lock.Lock()
+	return openTPM(w.device)
+}
+
+func openTPM(d string) (*tpm2.TPMContext, error) {
 	var iow io.ReadWriteCloser
 	var err error
-	if w.device == "sim" {
+	if d == "sim" {
 		iow, err = tpm2.OpenMssim("", 2321, 2322)
 	} else {
-		iow, err = tpm2.OpenTPMDevice(w.device)
+		iow, err = tpm2.OpenTPMDevice(d)
 	}
 
 	if err != nil {
@@ -165,7 +169,7 @@ func (w *wrapperTPM2) openTPM() (*tpm2.TPMContext, error) {
 	}
 	dev, err := tpm2.NewTPMContext(iow)
 	if err != nil {
-		return nil, errors.Wrapf(err, "opening %s", w.device)
+		return nil, errors.Wrapf(err, "opening %s", d)
 	}
 
 	if err = dev.Startup(tpm2.StartupClear); err != nil {

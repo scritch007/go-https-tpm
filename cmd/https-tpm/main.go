@@ -39,7 +39,7 @@ func main() {
 
 	cert, err = l.LoadCertificateFromNVRam("sim", 0x1500000, "")
 	if err != nil {
-		fmt.Println("Generating self signed certificate")
+		fmt.Printf("Generating self signed certificate, %v \n", err)
 		cert, err = https_tpm.GenerateSelfSignCertificate(pk, "localhost")
 		if err != nil {
 			panic(err)
