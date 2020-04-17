@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"fmt"
+	tpm22 "github.com/chrisccoulson/go-tpm2"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/scritch007/go-https-tpm"
 	https_tpm3 "github.com/scritch007/go-https-tpm/pkg/tpm2"
@@ -49,10 +50,16 @@ func main() {
 			return l.WriteCertificateToNVRam("sim", cert, 0x1500000, "")
 		}
 
-		if err := createCert(); err != nil {
-			tpmErr, ok := err.(tpm2.Error)
+		if err = createCert(); err != nil {
 
-			if !ok || tpmErr.Code != tpm2.RCNVDefined {
+			if tpmErr, ok := err.(tpm2.Error); !ok {
+
+				if errors.Cause(err).(*tpm22.TPMError).Code == tpm22.ErrorNVDefined {
+
+				} else {
+					panic(err)
+				}
+			} else if tpmErr.Code != tpm2.RCNVDefined {
 				panic(err)
 			}
 			if err = l.DeleteCertificateFromNVRam("sim", 0x1500000, ""); err != nil {
