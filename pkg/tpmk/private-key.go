@@ -12,11 +12,11 @@ import (
 )
 
 // LoadPrivateKeyFromTPM return a private from TPM
-func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle, password string) (crypto.Signer, error) {
+func (Loader) LoadPrivateKeyFromTPM(device string, handle uint32, password string) (crypto.Signer, error) {
 
 	w := &wrapper{
 		device:   device,
-		handle:   handle,
+		handle:   tpmutil.Handle(handle),
 		password: password,
 	}
 

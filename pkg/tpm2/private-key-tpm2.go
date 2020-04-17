@@ -8,15 +8,16 @@ import (
 	"strings"
 
 	"github.com/chrisccoulson/go-tpm2"
-	"github.com/google/go-tpm/tpmutil"
 	"github.com/pkg/errors"
 
 	"io"
 	"sync"
 )
 
-// LoadPrivateKeyFromTPM2 return a private from TPM
-func LoadPrivateKeyFromTPM2(device string, handle tpmutil.Handle, password string) (crypto.Signer, error) {
+type Loader struct{}
+
+// LoadPrivateKeyFromTPM return a private from TPM
+func (Loader) LoadPrivateKeyFromTPM(device string, handle uint32, password string) (crypto.Signer, error) {
 
 	w := &wrapperTPM2{
 		device:   device,
@@ -119,7 +120,7 @@ func (w *wrapperTPM2) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 	return
 }
 
-func (w *wrapperTPM2) init(handle tpmutil.Handle) error {
+func (w *wrapperTPM2) init(handle uint32) error {
 	dev, err := w.openTPM()
 	if dev != nil {
 		defer w.closeTPM(dev)
@@ -128,7 +129,7 @@ func (w *wrapperTPM2) init(handle tpmutil.Handle) error {
 		return err
 	}
 
-	pkey, err := dev.CreateResourceContextFromTPM(tpm2.Handle(uint32(handle)))
+	pkey, err := dev.CreateResourceContextFromTPM(tpm2.Handle(handle))
 	if err != nil {
 		return errors.Wrap(err, "couldn't get resource")
 	}

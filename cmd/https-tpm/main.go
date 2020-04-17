@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/google/go-tpm/tpm2"
-	"github.com/google/go-tpm/tpmutil"
 	"github.com/scritch007/go-https-tpm"
 	https_tpm3 "github.com/scritch007/go-https-tpm/pkg/tpm2"
 	https_tpm2 "github.com/scritch007/go-https-tpm/pkg/tpmk"
@@ -15,26 +14,30 @@ import (
 	"github.com/pkg/errors"
 )
 
+type loader interface {
+	https_tpm.CertificateLoader
+	https_tpm.PrivateKeyLoader
+}
+
 func main() {
 
 	var pk crypto.Signer
 	var err error
+	var l loader
 	if os.Getenv("old") != "" {
 		fmt.Println("Using old library")
-		pk, err = https_tpm3.LoadPrivateKeyFromTPM2("sim", tpmutil.Handle(0x81000000), "")
-		if err != nil {
-			panic(err)
-		}
+		l = https_tpm2.Loader{}
 	} else {
 		fmt.Println("Using new library")
-		pk, err = https_tpm2.LoadPrivateKeyFromTPM("sim", tpmutil.Handle(0x81000000), "")
-		if err != nil {
-			panic(err)
-		}
+		l = https_tpm3.Loader{}
+	}
+	pk, err = l.LoadPrivateKeyFromTPM("sim", 0x81000000, "")
+	if err != nil {
+		panic(err)
 	}
 	var cert []byte
 
-	cert, err = https_tpm.LoadCertificateFromNVRam("sim", tpmutil.Handle(0x1500000), "")
+	cert, err = l.LoadCertificateFromNVRam("sim", 0x1500000, "")
 	if err != nil {
 		fmt.Println("Generating self signed certificate")
 		cert, err = https_tpm.GenerateSelfSignCertificate(pk, "localhost")
@@ -43,7 +46,7 @@ func main() {
 		}
 
 		createCert := func() error {
-			return https_tpm.WriteCertificateToNVRam("sim", cert, tpmutil.Handle(0x1500000), "")
+			return l.WriteCertificateToNVRam("sim", cert, 0x1500000, "")
 		}
 
 		if err := createCert(); err != nil {
@@ -52,7 +55,7 @@ func main() {
 			if !ok || tpmErr.Code != tpm2.RCNVDefined {
 				panic(err)
 			}
-			if err = https_tpm.DeleteCertificateFromNVRam("sim", tpmutil.Handle(0x1500000), ""); err != nil {
+			if err = l.DeleteCertificateFromNVRam("sim", 0x1500000, ""); err != nil {
 				panic(err)
 			}
 			if err = createCert(); err != nil {
