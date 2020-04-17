@@ -21,9 +21,9 @@ func LoadCertificateFromNVRam(device string, handle tpmutil.Handle, password str
 }
 
 // Generate a self signed certificate
-func GenerateSelfSignCertificate(pk crypto.PrivateKey, hostname string) ([]byte, error) {
+func GenerateSelfSignCertificate(pk crypto.Signer, hostname string) ([]byte, error) {
 
-	privateKey, ok := pk.(privateKey)
+	privateKey, ok := pk.(crypto.Signer)
 	if !ok {
 		return nil, errors.New("Private key doesn't have Public method")
 	}

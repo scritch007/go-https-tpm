@@ -16,7 +16,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func NewTransport(privateKey crypto.PrivateKey, cert []byte) (*tls.Config, error) {
+func NewTransport(privateKey crypto.Signer, cert []byte) (*tls.Config, error) {
 
 	// Check if certificate signature matches the private key
 	if err := checkCertificate(cert, privateKey); err != nil {
@@ -33,12 +33,8 @@ func NewTransport(privateKey crypto.PrivateKey, cert []byte) (*tls.Config, error
 	}, nil
 }
 
-type privateKey interface {
-	Public() crypto.PublicKey
-}
-
 // generateSelfSignCert will generate keys where specified
-func generateSelfSignCert(priv privateKey, host string) ([]byte, error) {
+func generateSelfSignCert(priv crypto.Signer, host string) ([]byte, error) {
 
 	notBefore := time.Now()
 
@@ -86,13 +82,13 @@ func checkCertificate(cert []byte, pk crypto.PrivateKey) error {
 	sCert, err := x509.ParseCertificate(cert)
 
 	switch pk.(type) {
-	case privateKey:
-		switch pk.(privateKey).Public().(type) {
+	case crypto.Signer:
+		switch pk.(crypto.Signer).Public().(type) {
 		case *rsa.PublicKey:
 		default:
 			return errors.New("unimplemented public key type")
 		}
-		err = checkSignature(sCert, sCert.Signature, pk.(privateKey).Public().(*rsa.PublicKey))
+		err = checkSignature(sCert, sCert.Signature, pk.(crypto.Signer).Public().(*rsa.PublicKey))
 		if err != nil {
 			return errors.Wrap(err, "Check signature failed")
 		}

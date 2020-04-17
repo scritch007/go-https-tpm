@@ -12,7 +12,7 @@ import (
 )
 
 // LoadPrivateKeyFromTPM return a private from TPM
-func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle, password string) (crypto.PrivateKey, error) {
+func LoadPrivateKeyFromTPM(device string, handle tpmutil.Handle, password string) (crypto.Signer, error) {
 
 	w := &wrapper{
 		device:   device,
@@ -42,6 +42,7 @@ type wrapper struct {
 func (w *wrapper) Public() crypto.PublicKey {
 	return w.publicKey
 }
+
 func (w *wrapper) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error) {
 	pk, close, err := w.getPk()
 	defer close.Close()

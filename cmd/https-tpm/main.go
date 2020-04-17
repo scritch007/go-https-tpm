@@ -1,21 +1,36 @@
 package main
 
 import (
+	"crypto"
 	"crypto/tls"
 	"fmt"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpmutil"
 	"github.com/scritch007/go-https-tpm"
+	https_tpm3 "github.com/scritch007/go-https-tpm/pkg/tpm2"
+	https_tpm2 "github.com/scritch007/go-https-tpm/pkg/tpmk"
 	"net/http"
+	"os"
 
 	"github.com/pkg/errors"
 )
 
 func main() {
 
-	pk, err := https_tpm.LoadPrivateKeyFromTPM("sim", tpmutil.Handle(0x81000000), "")
-	if err != nil {
-		panic(err)
+	var pk crypto.Signer
+	var err error
+	if os.Getenv("old") != "" {
+		fmt.Println("Using old library")
+		pk, err = https_tpm3.LoadPrivateKeyFromTPM2("sim", tpmutil.Handle(0x81000000), "")
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		fmt.Println("Using new library")
+		pk, err = https_tpm2.LoadPrivateKeyFromTPM("sim", tpmutil.Handle(0x81000000), "")
+		if err != nil {
+			panic(err)
+		}
 	}
 	var cert []byte
 
