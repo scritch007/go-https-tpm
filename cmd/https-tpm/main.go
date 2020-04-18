@@ -34,7 +34,10 @@ func main() {
 	}
 	pk, err = l.LoadPrivateKeyFromTPM("sim", 0x81000000, "")
 	if err != nil {
-		panic(err)
+		pk, err = l.GeneratePrivateKey("sim", 0x81000000, "")
+		if err != nil {
+			panic(err)
+		}
 	}
 	var cert []byte
 

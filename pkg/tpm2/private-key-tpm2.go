@@ -16,6 +16,49 @@ import (
 
 type Loader struct{}
 
+func (Loader) GeneratePrivateKey(device string, handle uint32, password string) (crypto.Signer, error) {
+	dev, err := openTPM(device)
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't open TPM")
+	}
+
+	defer dev.Close()
+	template := tpm2.Public{
+		Type:    tpm2.ObjectTypeRSA,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs:   tpm2.AttrSign | tpm2.AttrDecrypt | tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth,
+		Params: tpm2.PublicParamsU{
+			Data: &tpm2.RSAParams{
+				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
+				Scheme: tpm2.RSAScheme{
+					Scheme:  tpm2.RSASchemeNull,},
+				KeyBits:  2048,
+				Exponent: 0}}}
+	objectHandle, _, _, _, _, err := dev.CreatePrimary(dev.OwnerHandleContext(), nil, &template, nil, nil, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't create primary object")
+	}
+
+	defer dev.FlushContext(objectHandle)
+
+	r, err := dev.EvictControl(dev.OwnerHandleContext(), objectHandle, tpm2.Handle(handle), nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "couldn't evict key")
+	}
+
+	w := &wrapperTPM2{
+		device:    device,
+		handle:    r,
+		publicKey: nil,
+		lock:      sync.Mutex{},
+		password:  password,
+	}
+	if err = w.getPublicKey(dev); err != nil {
+		return nil, errors.Wrap(err, "error fetching public key")
+	}
+	return w, nil
+}
+
 // LoadPrivateKeyFromTPM return a private from TPM
 func (Loader) LoadPrivateKeyFromTPM(device string, handle uint32, password string) (crypto.Signer, error) {
 
@@ -133,7 +176,16 @@ func (w *wrapperTPM2) init(handle uint32) error {
 	if err != nil {
 		return errors.Wrap(err, "couldn't get resource")
 	}
-	pub, _, _, err := dev.ReadPublic(pkey)
+	w.handle = pkey
+	if err = w.getPublicKey(dev); err != nil {
+		return errors.Wrap(err, "getPublicKey failed")
+	}
+
+	return nil
+}
+
+func (w *wrapperTPM2) getPublicKey(dev *tpm2.TPMContext) error {
+	pub, _, _, err := dev.ReadPublic(w.handle)
 	if err != nil {
 		return errors.Wrap(err, "couldn't get public key")
 	}
@@ -145,8 +197,6 @@ func (w *wrapperTPM2) init(handle uint32) error {
 	pubKey := &rsa.PublicKey{N: new(big.Int).SetBytes(pub.Unique.RSA()), E: exp}
 
 	w.publicKey = pubKey
-	w.handle = pkey
-
 	return nil
 }
 
