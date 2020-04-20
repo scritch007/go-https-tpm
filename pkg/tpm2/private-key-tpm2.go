@@ -2,13 +2,18 @@ package https_tpm
 
 import (
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
-	"math/big"
-	"strings"
-
 	"github.com/chrisccoulson/go-tpm2"
 	"github.com/pkg/errors"
+	"github.com/scritch007/go-https-tpm/pkg/tpm2/internal"
+	"hash"
+	"math/big"
+	"strings"
 
 	"io"
 	"sync"
@@ -31,7 +36,7 @@ func (Loader) GeneratePrivateKey(device string, handle uint32, password string) 
 			Data: &tpm2.RSAParams{
 				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
 				Scheme: tpm2.RSAScheme{
-					Scheme:  tpm2.RSASchemeNull,},
+					Scheme: tpm2.RSASchemeNull,},
 				KeyBits:  2048,
 				Exponent: 0}}}
 	objectHandle, _, _, _, _, err := dev.CreatePrimary(dev.OwnerHandleContext(), nil, &template, nil, nil, nil)
@@ -233,4 +238,116 @@ func openTPM(d string) (*tpm2.TPMContext, error) {
 func (w *wrapperTPM2) closeTPM(dev *tpm2.TPMContext) {
 	dev.Close()
 	w.lock.Unlock()
+}
+
+func (l Loader) StorePrivateKey(device string, handle uint32, password string, key *rsa.PrivateKey) error {
+	dev, err := openTPM(device)
+	if err != nil {
+		return errors.Wrap(err, "error opening tpm")
+	}
+	defer dev.Close()
+
+	objectPublic := tpm2.Public{
+		Type:    tpm2.ObjectTypeRSA,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs:   tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrNoDA | tpm2.AttrSign,
+		Params: tpm2.PublicParamsU{
+			Data: &tpm2.RSAParams{
+				Symmetric: tpm2.SymDefObject{Algorithm: tpm2.SymObjectAlgorithmNull},
+				Scheme:    tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
+				KeyBits:   2048,
+				Exponent:  uint32(key.PublicKey.E)}},
+		Unique: tpm2.PublicIDU{Data: tpm2.Digest(key.PublicKey.N.Bytes())}}
+	objectSensitive := tpm2.Sensitive{
+		Type:      tpm2.ObjectTypeRSA,
+		AuthValue: make(tpm2.Auth, objectPublic.NameAlg.Size()),
+		Sensitive: tpm2.SensitiveCompositeU{Data: tpm2.PrivateKeyRSA(key.Primes[0].Bytes())}}
+
+	//primary := dev.OwnerHandleContext()
+
+	template := tpm2.Public{
+		Type:    tpm2.ObjectTypeRSA,
+		NameAlg: tpm2.HashAlgorithmSHA256,
+		Attrs:   tpm2.AttrFixedTPM | tpm2.AttrFixedParent | tpm2.AttrSensitiveDataOrigin | tpm2.AttrUserWithAuth | tpm2.AttrNoDA | tpm2.AttrRestricted | tpm2.AttrDecrypt,
+		Params: tpm2.PublicParamsU{
+			Data: &tpm2.RSAParams{
+				Symmetric: tpm2.SymDefObject{
+					Algorithm: tpm2.SymObjectAlgorithmAES,
+					KeyBits:   tpm2.SymKeyBitsU{Data: uint16(128)},
+					Mode:      tpm2.SymModeU{Data: tpm2.SymModeCFB}},
+				Scheme:   tpm2.RSAScheme{Scheme: tpm2.RSASchemeNull},
+				KeyBits:  2048,
+				Exponent: 0}}}
+
+	primary, _, _, _, _, err := dev.CreatePrimary(dev.OwnerHandleContext(), nil, &template, nil, nil, nil)
+	if err != nil {
+		return errors.Wrap(err, "couldn't create primary")
+	}
+
+	importMethod := func(encryptionKey tpm2.Data, duplicate tpm2.Private, inSymSeed tpm2.EncryptedSecret, symmetricAlg *tpm2.SymDefObject, parentContextAuthSession tpm2.SessionContext) (tpm2.ResourceContext, error) {
+		priv, err := dev.Import(primary, encryptionKey, &objectPublic, duplicate, inSymSeed, symmetricAlg, parentContextAuthSession)
+		if err != nil {
+			return nil, errors.Wrap(err, "import failed")
+		}
+		object, err := dev.Load(primary, priv, &objectPublic, parentContextAuthSession)
+		if err != nil {
+			return nil, errors.Wrap(err, "load failed")
+		}
+
+		return object, nil
+	}
+
+	type sensitiveSized struct {
+		Ptr *tpm2.Sensitive `tpm2:"sized"`
+	}
+
+	sensitive, _ := tpm2.MarshalToBytes(sensitiveSized{&objectSensitive})
+	name, _ := objectPublic.Name()
+
+	primaryPublic, _, _, err := dev.ReadPublic(primary)
+	if err != nil {
+		return errors.Wrap(err, "could'nt read public of primary")
+	}
+
+	seed := make([]byte, primary.Name().Algorithm().Size())
+	rand.Read(seed)
+
+	symKey := internal.KDFa(primary.Name().Algorithm().GetHash(), seed, []byte("STORAGE"), name, nil,
+		int(primaryPublic.Params.AsymDetail().Symmetric.KeyBits.Sym()))
+
+	block, err := aes.NewCipher(symKey)
+	if err != nil {
+		return errors.Wrap(err, "couldn't create new cypher key")
+	}
+	stream := cipher.NewCFBEncrypter(block, make([]byte, aes.BlockSize))
+	dupSensitive := make(tpm2.Private, len(sensitive))
+	stream.XORKeyStream(dupSensitive, sensitive)
+
+	hmacKey := internal.KDFa(primary.Name().Algorithm().GetHash(), seed, []byte("INTEGRITY"), nil, nil, primary.Name().Algorithm().Size()*8)
+	h := hmac.New(func() hash.Hash { return primary.Name().Algorithm().NewHash() }, hmacKey)
+	h.Write(dupSensitive)
+	h.Write(name)
+
+	duplicate, _ := tpm2.MarshalToBytes(h.Sum(nil), tpm2.RawBytes(dupSensitive))
+
+	keyPublic := rsa.PublicKey{
+		N: new(big.Int).SetBytes(primaryPublic.Unique.RSA()),
+		E: 65537}
+	label := []byte("DUPLICATE")
+	label = append(label, 0)
+	encSeed, err := rsa.EncryptOAEP(primary.Name().Algorithm().NewHash(), rand.Reader, &keyPublic, seed, label)
+	if err != nil {
+		return errors.Wrap(err, "couldn't encrypt OAEP")
+	}
+
+	privOwnerRc, err := importMethod(nil, duplicate, encSeed, nil, nil)
+	if err != nil {
+		return errors.Wrap(err, "couldn't import")
+	}
+
+	defer dev.FlushContext(privOwnerRc)
+
+	_, err = dev.EvictControl(dev.OwnerHandleContext(), privOwnerRc, tpm2.Handle(handle), nil)
+
+	return errors.Wrap(err, "couldn't evict object")
 }

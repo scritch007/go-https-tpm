@@ -77,36 +77,15 @@ func generateSelfSignCert(priv crypto.Signer, host string) ([]byte, error) {
 	return derBytes, nil
 }
 
-func checkCertificate(cert []byte, pk crypto.PrivateKey) error {
+func checkCertificate(cert []byte, pk crypto.Signer) error {
 
 	sCert, err := x509.ParseCertificate(cert)
+	if err != nil {
+		return errors.Wrap(err, "couldn't load certificate")
+	}
 
-	switch pk.(type) {
-	case crypto.Signer:
-		switch pk.(crypto.Signer).Public().(type) {
-		case *rsa.PublicKey:
-		default:
-			return errors.New("unimplemented public key type")
-		}
-		err = checkSignature(sCert, sCert.Signature, pk.(crypto.Signer).Public().(*rsa.PublicKey))
-		if err != nil {
-			return errors.Wrap(err, "Check signature failed")
-		}
+	if sCert.PublicKey.(*rsa.PublicKey).N.Cmp(pk.Public().(*rsa.PublicKey).N) == 0 && pk.Public().(*rsa.PublicKey).E == sCert.PublicKey.(*rsa.PublicKey).E {
 		return nil
 	}
-	return errors.New("unimplemented check")
-}
-
-// CheckSignature verifies that signature is a valid signature over signed from
-// a crypto.PublicKey.
-func checkSignature(c *x509.Certificate, signature []byte, publicKey *rsa.PublicKey) (err error) {
-	hashType := crypto.SHA256
-	if !hashType.Available() {
-		return x509.ErrUnsupportedAlgorithm
-	}
-
-	h := hashType.New()
-	h.Write(c.RawTBSCertificate)
-	digest := h.Sum(nil)
-	return errors.Wrap(rsa.VerifyPKCS1v15(publicKey, hashType, digest, signature), "Verify failed")
+	return errors.New("Public key don't match")
 }

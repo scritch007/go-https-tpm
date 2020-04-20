@@ -2,6 +2,7 @@ package https_tpm
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"fmt"
 	"github.com/folbricht/tpmk"
 	"github.com/google/go-tpm/tpm2"
@@ -111,4 +112,8 @@ func (l Loader) GeneratePrivateKey(device string, handle uint32, password string
 	}
 	iow.Close()
 	return l.LoadPrivateKeyFromTPM(device, handle, password)
+}
+
+func (l Loader) StorePrivateKey(device string, handle uint32, password string, key *rsa.PrivateKey) error {
+	return errors.New("not implemented")
 }
