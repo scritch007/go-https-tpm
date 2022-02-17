@@ -8,14 +8,13 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	tpm22 "github.com/chrisccoulson/go-tpm2"
-	"github.com/google/go-tpm/tpm2"
-	"github.com/scritch007/go-https-tpm"
-	https_tpm3 "github.com/scritch007/go-https-tpm/pkg/tpm2"
-	https_tpm2 "github.com/scritch007/go-https-tpm/pkg/tpmk"
 	"io/ioutil"
 	"net/http"
-	"os"
+
+	"github.com/google/go-tpm/tpm2"
+
+	https_tpm "github.com/scritch007/go-https-tpm"
+	https_tpm2 "github.com/scritch007/go-https-tpm/pkg/tpmk"
 
 	"github.com/pkg/errors"
 )
@@ -37,13 +36,9 @@ func main() {
 	var pk crypto.Signer
 	var err error
 	var l loader
-	if os.Getenv("old") != "" {
-		fmt.Println("Using old library")
-		l = https_tpm2.Loader{}
-	} else {
-		fmt.Println("Using new library")
-		l = https_tpm3.Loader{}
-	}
+
+	fmt.Println("Using old library")
+	l = https_tpm2.Loader{}
 
 	device := "sim"
 	privateKeyHandle := uint32(0x81000000)
@@ -107,12 +102,7 @@ func main() {
 		if err = createCert(); err != nil {
 
 			if tpmErr, ok := err.(tpm2.Error); !ok {
-
-				if errors.Cause(err).(*tpm22.TPMError).Code == tpm22.ErrorNVDefined {
-
-				} else {
-					panic(err)
-				}
+				panic(err)
 			} else if tpmErr.Code != tpm2.RCNVDefined {
 				panic(err)
 			}
